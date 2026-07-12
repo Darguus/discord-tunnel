@@ -1,0 +1,33 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      # These tags are not optional: without them the binary compiles but fails
+      # to connect at runtime (REALITY needs uTLS). CI builds exactly what a
+      # release build does.
+      - name: Test
+        run: go test -tags "with_gvisor,with_utls,with_quic" ./...
+
+      - name: Vet
+        run: go vet -tags "with_gvisor,with_utls,with_quic" ./...
+
+      - name: Build
+        run: go build -tags "with_gvisor,with_utls,with_quic" -ldflags "-H=windowsgui -s -w" -o build/DiscordTunnel.exe ./cmd/discord-tunnel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DiscordTunnel
+          path: build/DiscordTunnel.exe

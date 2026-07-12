@@ -1,0 +1,16 @@
+# A real config holds the server UUID and REALITY keys — they are credentials.
+# This repository is public; the only config that belongs in it is the example.
+config.json
+*.local.json
+
+# The tunnel log records the hostnames that were resolved.
+*.log
+
+# Build output
+/build/
+/dist/
+*.exe
+*.syso
+
+# The wintun driver is redistributed alongside a release, not committed.
+wintun.dll

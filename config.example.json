@@ -1,0 +1,25 @@
+{
+  "server": {
+    "address": "your.server.example.com",
+    "port": 443,
+    "uuid": "00000000-0000-0000-0000-000000000000",
+    "flow": "xtls-rprx-vision",
+    "reality": {
+      "server_name": "www.googletagmanager.com",
+      "public_key": "PASTE_THE_43_CHARACTER_REALITY_PUBLIC_KEY_HERE",
+      "short_id": "0123456789abcdef",
+      "fingerprint": "chrome"
+    }
+  },
+  "tunnel": {
+    "processes": ["Discord.exe", "DiscordCanary.exe", "DiscordPTB.exe", "Update.exe"],
+    "domains": [],
+    "log_level": "warn",
+    "mtu": 1420
+  },
+  "app": {
+    "autostart": false,
+    "connect_on_launch": true,
+    "launch_discord_on_start": false
+  }
+}
