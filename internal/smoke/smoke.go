@@ -50,32 +50,86 @@ func Run(cfg config.Config) error {
 	// finish installing the routes before traffic actually flows through it.
 	time.Sleep(2 * time.Second)
 
-	checks := []struct {
-		name string
-		host string
-	}{
-		{"Discord gateway (websocket)", "gateway.discord.gg:443"},
-		{"Discord API", "discord.com:443"},
-		{"Discord voice region", "russell.discord.media:443"},
-	}
-
 	allPassed := true
-	for _, c := range checks {
+
+	// Part 1 — TCP: can Discord's signalling hosts be reached through the tunnel?
+	// These go through the loopback SOCKS inbound, which has no direct fallback,
+	// so a success here cannot be an accidental leak: the bytes went through the
+	// server or not at all.
+	fmt.Println("TCP (chat, login, gateway):")
+	tcpChecks := []struct{ name, host string }{
+		{"Discord gateway", "gateway.discord.gg:443"},
+		{"Discord API", "discord.com:443"},
+		{"Discord CDN", "cdn.discordapp.com:443"},
+	}
+	for _, c := range tcpChecks {
 		lat, err := dialThroughTunnel(c.host)
 		if err != nil {
-			fmt.Printf("  [FAIL] %-28s %v\n", c.name, err)
+			fmt.Printf("  [FAIL] %-20s %v\n", c.name, err)
 			allPassed = false
 			continue
 		}
-		fmt.Printf("  [ OK ] %-28s %d ms\n", c.name, lat.Milliseconds())
+		fmt.Printf("  [ OK ] %-20s %d ms\n", c.name, lat.Milliseconds())
+	}
+
+	// Part 2 — UDP: the check that actually matters. Discord voice is UDP, and a
+	// UDP-blocking network is the whole reason this app exists. We ask a STUN
+	// server what public address our UDP came from; if the tunnel is carrying
+	// voice, that address is the server's, not the ISP's.
+	fmt.Println("\nUDP (voice — the reason this app exists):")
+	if err := checkVoicePath(cfg); err != nil {
+		fmt.Printf("  [FAIL] %v\n", err)
+		allPassed = false
 	}
 
 	fmt.Println()
 	if !allPassed {
-		return fmt.Errorf("some checks failed — Discord may not work fully through the tunnel")
+		return fmt.Errorf("some checks failed — see above")
 	}
-	fmt.Println("All checks passed. Discord traffic reaches the server through the tunnel.")
+	fmt.Println("All checks passed. Discord — including voice — travels through your server.")
 	return nil
+}
+
+// stunServers are queried in order until one answers. Two independent operators
+// so a single outage does not fail the check.
+var stunServers = []string{
+	"stun.l.google.com:19302",
+	"stun.cloudflare.com:3478",
+}
+
+// checkVoicePath proves UDP voice traverses the tunnel by confirming the public
+// address our UDP exits from is the server's, not this machine's ISP.
+func checkVoicePath(cfg config.Config) error {
+	var mapped net.IP
+	var lastErr error
+	for _, s := range stunServers {
+		ip, err := discoverPublicUDPAddr(s, checkTimeout)
+		if err == nil {
+			mapped = ip
+			break
+		}
+		lastErr = err
+	}
+	if mapped == nil {
+		return fmt.Errorf("UDP is not getting through at all (voice would not work): %v", lastErr)
+	}
+
+	serverIP := net.ParseIP(cfg.Server.Address)
+	switch {
+	case serverIP != nil && mapped.Equal(serverIP):
+		// The exit address is the server's: UDP is being carried by the tunnel.
+		fmt.Printf("  [ OK ] UDP exits via your server (%s) — voice will work\n", mapped)
+		return nil
+	case serverIP != nil:
+		// UDP got out, but not via the server. That is a leak: voice packets are
+		// escaping the tunnel and would be dropped by a UDP-blocking network.
+		return fmt.Errorf("UDP is LEAKING: exits via %s, but your server is %s — voice is not tunnelled", mapped, serverIP)
+	default:
+		// The server is configured by hostname, so we cannot compare exactly.
+		// Report the address for the user to eyeball against their server's IP.
+		fmt.Printf("  [ OK ] UDP exits via %s — confirm this is your server's public IP\n", mapped)
+		return nil
+	}
 }
 
 // dialThroughTunnel connects to host via the loopback SOCKS inbound, which is
