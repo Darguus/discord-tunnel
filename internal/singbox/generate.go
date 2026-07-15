@@ -27,6 +27,27 @@ const (
 	dnsLocal = "dns-local"
 )
 
+// discordDNSDomains are resolved through the tunnel unconditionally, by domain
+// rather than by process.
+//
+// This is the load-bearing list. A censoring ISP's first move is DNS poisoning:
+// it answers discord.com with a sinkhole IP, and every later step faithfully
+// carries you to a dead end. Matching the DNS query by process name is not
+// enough — process attribution on a hijacked DNS packet is unreliable, and a
+// single miss drops the query to the local (poisoned) resolver. Matching by
+// domain cannot miss: if the name ends in one of these, it is resolved over the
+// tunnel or not at all.
+var discordDNSDomains = []string{
+	"discord.com",
+	"discordapp.com",
+	"discordapp.net",
+	"discord.gg",
+	"discord.media",
+	"discord.dev",
+	"discordcdn.com",
+	"discordstatus.com",
+}
+
 // Generate renders the sing-box JSON document for cfg.
 //
 // The routing story, in the order sing-box evaluates it:
@@ -71,6 +92,13 @@ func logSection(cfg config.Config, logPath string) map[string]any {
 // tunnel would faithfully carry us to it.
 func dnsSection(cfg config.Config) map[string]any {
 	rules := []map[string]any{}
+	// By domain first: this is the rule that actually defeats DNS poisoning, and
+	// it must win over everything below, none of which can be trusted to catch a
+	// hijacked query reliably.
+	rules = append(rules, map[string]any{
+		"domain_suffix": discordDNSDomains,
+		"server":        dnsProxy,
+	})
 	if len(cfg.Tunnel.Processes) > 0 {
 		rules = append(rules, map[string]any{
 			"process_name": cfg.Tunnel.Processes,

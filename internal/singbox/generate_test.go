@@ -122,6 +122,59 @@ func TestGeneratedConfigCarriesRealityIdentity(t *testing.T) {
 	}
 }
 
+// TestDiscordDNSResolvesThroughTheTunnel is a regression guard for the bug that
+// made Discord hang on "Checking for updates": a censoring ISP poisons the
+// Discord domains at the local resolver, so if their DNS is not forced through
+// the tunnel, every connection is aimed at a sinkhole. This asserts the domain
+// rule exists and points at the tunnel resolver, ahead of the less reliable
+// process rule.
+func TestDiscordDNSResolvesThroughTheTunnel(t *testing.T) {
+	raw, err := Generate(sample(), "tunnel.log")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	var doc struct {
+		DNS struct {
+			Rules []map[string]any `json:"rules"`
+			Final string           `json:"final"`
+		} `json:"dns"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("re-parse: %v", err)
+	}
+
+	var domainRuleIdx = -1
+	for i, rule := range doc.DNS.Rules {
+		suffixes, ok := rule["domain_suffix"].([]any)
+		if !ok {
+			continue
+		}
+		hasDiscordCom := false
+		for _, s := range suffixes {
+			if s == "discord.com" {
+				hasDiscordCom = true
+			}
+		}
+		if hasDiscordCom {
+			if rule["server"] != dnsProxy {
+				t.Errorf("discord.com DNS must go to %q, got %q", dnsProxy, rule["server"])
+			}
+			domainRuleIdx = i
+		}
+	}
+	if domainRuleIdx == -1 {
+		t.Fatal("no DNS rule forces discord.com through the tunnel resolver — poisoned DNS would leak")
+	}
+	// The domain rule must precede any process-name rule, since process matching
+	// on hijacked DNS is exactly what proved unreliable.
+	for i, rule := range doc.DNS.Rules {
+		if _, ok := rule["process_name"]; ok && i < domainRuleIdx {
+			t.Error("process-name DNS rule precedes the domain rule; the unreliable matcher must not win")
+		}
+	}
+}
+
 func TestVoiceTrafficIsNotRestrictedToTCP(t *testing.T) {
 	raw, err := Generate(sample(), "tunnel.log")
 	if err != nil {
